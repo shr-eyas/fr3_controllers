@@ -1,6 +1,7 @@
-# Franka ROS 2 Installation Guide
+# Franka using ROS2
 
-This guide provides step-by-step instructions to install and build the Franka ROS 2 workspace.
+## Overview
+This repository provides ROS 2 packages for controlling single and dual Franka Emika Panda arms using joint position, velocity, torque and impedance controllers. You can use the launch files for real hardware as well as for a simulated environment with fake hardware.
 
 ## Prerequisites
 Ensure you have **ROS 2 Humble** installed on your system. If not, refer to the official ROS 2 installation guide: [ROS 2 Humble Installation](https://docs.ros.org/en/humble/Installation.html)
