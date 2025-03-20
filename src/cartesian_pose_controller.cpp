@@ -28,43 +28,91 @@ CartesianPoseController::state_interface_configuration() const {
 }
 
 controller_interface::return_type CartesianPoseController::update(
-    const rclcpp::Time& /*time*/,
-    const rclcpp::Duration& /*period*/) {
-  if (initialization_flag_) {
-    // Get initial orientation and translation
-    std::tie(orientation_, position_) =
-        franka_cartesian_pose_->getCurrentOrientationAndTranslation();
-    initial_robot_time_ = state_interfaces_.back().get_value();
+  const rclcpp::Time& /*time*/,
+  const rclcpp::Duration& /*period*/)
+{
+
+// On first update, record the initial pose and robot time.
+if (initialization_flag_) {
+  std::tie(orientation_, position_) = franka_cartesian_pose_->getCurrentOrientationAndTranslation();
+ 
+  initial_orientation_ = orientation_;
+  initial_position_ = position_;
+
+  initial_robot_time_ = state_interfaces_.back().get_value();
+  elapsed_time_ = 0.0;
+  // Ensure we start with phase 1.
+  reached_A_ = false;
+
+  initialization_flag_ = false;
+} 
+else {
+  robot_time_ = state_interfaces_.back().get_value();
+  elapsed_time_ = robot_time_ - initial_robot_time_;
+}
+
+// --- Transform A ---
+Eigen::Matrix3d rotA;
+rotA << 0.0,  1.0, 0.0,
+        0.0,  0.0, 1.0,
+        1.0,  0.0, 0.0;
+Eigen::Quaterniond qA(rotA);
+Eigen::Vector3d posA(0.5, -0.1, 0.1);
+
+// --- Transform B ---
+Eigen::Quaterniond qB = qA;
+Eigen::Vector3d posB(0.5, 0.1, 0.1);
+
+// === Timing Parameters (in seconds) ===
+const double total_time_A = 3.0;  // Duration to reach transformA.
+const double wait_time_A  = 5.0;  // Hold time at transformA.
+const double total_time_B = 2.0;  // Duration for transition from A to B.
+
+Eigen::Quaterniond new_orientation;
+Eigen::Vector3d new_position;
+
+// === Phase 1: Interpolation to Transform A ===
+if (!reached_A_) {
+  double t_A = std::min(1.0, elapsed_time_ / total_time_A);
+  // Cosine interpolation for smooth transition.
+  t_A = 0.5 * (1.0 - std::cos(t_A * M_PI));
+  // Slerp for quaternion interpolation.
+  new_orientation = initial_orientation_.slerp(t_A, qA);
+  // Linear interpolation for translation.
+  new_position = (1 - t_A) * initial_position_ + t_A * posA;
+
+  if (elapsed_time_ >= total_time_A) {
+    reached_A_ = true;
+    // Reset timer for the hold phase.
+    initial_robot_time_ = robot_time_;
     elapsed_time_ = 0.0;
-
-    initialization_flag_ = false;
-  } else {
-    robot_time_ = state_interfaces_.back().get_value();
-    elapsed_time_ = robot_time_ - initial_robot_time_;
+    RCLCPP_INFO(get_node()->get_logger(), "Reached transformA. Entering hold phase.");
   }
+}
+// === Phase 2: Hold at Transform A ===
+else if (elapsed_time_ < wait_time_A) {
+  new_orientation = qA;
+  new_position = posA;
+}
+// === Phase 3: Transition from Transform A to Transform B ===
+else {
+  double t_B = std::min(1.0, (elapsed_time_ - wait_time_A) / total_time_B);
+  t_B = 0.5 * (1.0 - std::cos(t_B * M_PI));
+  new_orientation = qA.slerp(t_B, qB);
+  new_position = (1 - t_B) * posA + t_B * posB;
 
-  double radius = 0.1;
-  double angle = M_PI / 4 * (1 - std::cos(M_PI / 5.0 * elapsed_time_));
-
-  double delta_x = radius * std::sin(angle);
-  double delta_z = radius * (std::cos(angle) - 1);
-
-  Eigen::Quaterniond new_orientation;
-  Eigen::Vector3d new_position;
-
-  new_position = position_;
-  new_orientation = orientation_;
-
-  new_position(0) -= delta_x;
-  new_position(2) -= delta_z;
-
-  if (franka_cartesian_pose_->setCommand(new_orientation, new_position)) {
-    return controller_interface::return_type::OK;
-  } else {
-    RCLCPP_FATAL(get_node()->get_logger(),
-                 "Set command failed. Did you activate the elbow command interface?");
-    return controller_interface::return_type::ERROR;
+  if (t_B >= 1.0) {
+    RCLCPP_INFO(get_node()->get_logger(), "Reached transformB.");
   }
+}
+
+if (franka_cartesian_pose_->setCommand(new_orientation, new_position)) {
+  return controller_interface::return_type::OK;
+} else {
+  RCLCPP_FATAL(get_node()->get_logger(),
+               "Set command failed. Did you activate the elbow command interface?");
+  return controller_interface::return_type::ERROR;
+}
 }
 
 CallbackReturn CartesianPoseController::on_init() {

@@ -43,6 +43,15 @@ class CartesianPoseController : public controller_interface::ControllerInterface
   double robot_time_{0.0};
   std::string robot_description_;
   std::string arm_id_;
+
+  // --- New Members for Three-Phase Interpolation ---
+  // To store the initial pose for interpolation.
+  Eigen::Quaterniond initial_orientation_;
+  Eigen::Vector3d initial_position_;
+
+  // Flag to indicate whether transformA has been reached.
+  bool reached_A_ = false;
+  
 };
 
 }  // namespace fr3_controllers
